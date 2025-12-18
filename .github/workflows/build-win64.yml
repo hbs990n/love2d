@@ -1,0 +1,87 @@
+name: Build Love2D Windows 64-bit
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:  # 允许手动运行
+
+jobs:
+  build-windows:
+    runs-on: windows-2022  # 使用较旧的版本确保兼容性
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+    
+    - name: Setup Visual Studio
+      uses: ilammy/msvc-dev-cmd@v1
+    
+    - name: Install dependencies (using vcpkg)
+      run: |
+        # 安装 vcpkg 和必要依赖
+        git clone https://github.com/Microsoft/vcpkg.git
+        .\vcpkg\bootstrap-vcpkg.bat
+        .\vcpkg\vcpkg install sdl2 openal-soft freetype luajit physfs libmodplug libvorbis libogg libtheora
+    
+    - name: Configure with CMake
+      run: |
+        mkdir build
+        cd build
+        cmake .. -G "Visual Studio 17 2022" -A x64 -DCMAKE_TOOLCHAIN_FILE="../vcpkg/scripts/buildsystems/vcpkg.cmake"
+    
+    - name: Build Release
+      run: |
+        cd build
+        cmake --build . --config Release -j2
+    
+    - name: List built files
+      run: |
+        dir build\src\Release\ /s
+        dir build\Release\ /s
+    
+    - name: Find love.exe
+      run: |
+        # 查找 love.exe 文件
+        Get-ChildItem -Path build -Recurse -Filter "love.exe" | ForEach-Object {
+          Write-Host "Found love.exe at: $_"
+          Copy-Item $_ .\love.exe -Force
+        }
+        if (Test-Path "love.exe") {
+          Write-Host "love.exe found and copied to root"
+        } else {
+          Write-Host "love.exe not found, checking alternative names"
+          Get-ChildItem -Path build -Recurse -Filter "*love*" | ForEach-Object {
+            Write-Host "Found: $_"
+          }
+        }
+    
+    - name: Create zip package
+      run: |
+        if (Test-Path "love.exe") {
+          # 创建包含必要 DLL 的 zip 包
+          $dlls = @("SDL2.dll", "openal32.dll", "freetype.dll", "lua51.dll")
+          foreach ($dll in $dlls) {
+            # 从 vcpkg 安装目录复制 DLL
+            $dllPath = "vcpkg\installed\x64-windows\bin\$dll"
+            if (Test-Path $dllPath) {
+              Copy-Item $dllPath .\
+            }
+          }
+          # 创建 zip
+          Compress-Archive -Path love.exe, *.dll -DestinationPath love2d-windows-x64.zip -Force
+        } else {
+          Write-Host "love.exe not found, creating empty archive"
+          "No love.exe built" | Out-File -FilePath build-failed.txt
+          Compress-Archive -Path build-failed.txt -DestinationPath love2d-windows-x64.zip -Force
+        }
+    
+    - name: Upload Windows binary
+      uses: actions/upload-artifact@v4
+      with:
+        name: love2d-windows-x64
+        path: |
+          love2d-windows-x64.zip
+          love.exe
+        if-no-files-found: warn
