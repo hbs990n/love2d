@@ -1,7 +1,7 @@
 name: Build Love2D with Chinese Fonts
 
 on:
-  workflow_dispatch:  # 只手动运行
+  workflow_dispatch:
 
 jobs:
   build:
@@ -21,35 +21,7 @@ jobs:
       with:
         path: megasource/libs/love
     
-    # 3. 修复控制台编码（已确认需要）
-    - name: Patch console encoding in love.cpp
-      run: |
-        echo "=== 修复控制台UTF-8编码 ==="
-        $loveFile = "megasource/libs/love/src/love.cpp"
-        
-        if (Test-Path $loveFile) {
-            # 备份原文件
-            Copy-Item $loveFile "$loveFile.backup"
-            
-            # 读取内容
-            $content = Get-Content $loveFile -Raw
-            
-            # 在main函数开头添加控制台编码设置
-            $content = $content -replace '(int main\(int argc, char \*\*argv\)\s*\{)', 
-                '$1
-#ifdef LOVE_WINDOWS
-    // 设置控制台编码为UTF-8支持中文
-    SetConsoleOutputCP(65001);
-    SetConsoleCP(65001);
-#endif'
-            
-            Set-Content $loveFile $content -Encoding UTF8
-            Write-Host "✓ love.cpp 控制台编码已修复"
-        } else {
-            Write-Host "⚠ 未找到 love.cpp 文件"
-        }
-    
-    # 4. 下载开源中文字体
+    # 3. 下载开源中文字体
     - name: Download open-source Chinese fonts
       run: |
         echo "=== 下载开源中文字体 ==="
@@ -75,12 +47,12 @@ jobs:
                 curl -L -o $output $url --silent
                 if (Test-Path $output) {
                     $size = (Get-Item $output).Length / 1MB
-                    Write-Host "  ✓ 成功 ($([math]::Round($size, 2)) MB)"
+                    Write-Host "  成功 ($([math]::Round($size, 2)) MB)"
                 } else {
-                    Write-Host "  ✗ 下载失败"
+                    Write-Host "  下载失败"
                 }
             } catch {
-                Write-Host "  ⚠ 下载错误: $_"
+                Write-Host "  下载错误"
             }
         }
         
@@ -91,22 +63,20 @@ jobs:
             Write-Host "  - $($_.Name) ($sizeMB MB)"
         }
     
-    # 5. 配置CMake
+    # 4. 配置CMake
     - name: Configure CMake
       run: |
         cd megasource
         cmake -B build -S . -T v143 -A x64,version=10.0.26100.0 --install-prefix install
     
-    # 6. 编译
+    # 5. 编译
     - name: Build
       run: |
         cd megasource
         cmake --build build --config Release --target PACKAGE
-        
-        # 同时编译install目标获取可执行文件
-        cmake --build build --config Release --target install 2>&1 | Out-Null
+        cmake --build build --config Release --target install
     
-    # 7. 收集和整理编译结果
+    # 6. 收集和整理编译结果
     - name: Collect and organize build results
       run: |
         echo "=== 整理编译结果 ==="
@@ -118,7 +88,7 @@ jobs:
         # 1. 复制字体文件
         if (Test-Path "megasource/chinese-fonts") {
             Copy-Item "megasource/chinese-fonts/*" "love2d-chinese/chinese-fonts/" -Force
-            Write-Host "✓ 复制中文字体"
+            Write-Host "复制中文字体"
         }
         
         # 2. 查找并复制可执行文件
@@ -129,7 +99,7 @@ jobs:
             Copy-Item "megasource/install/bin/love.exe" "love2d-chinese/love.exe" -Force
             $exeFound = $true
             $sizeMB = [math]::Round((Get-Item "love2d-chinese/love.exe").Length / 1MB, 2)
-            Write-Host "✓ 找到 love.exe ($sizeMB MB)"
+            Write-Host "找到 love.exe ($sizeMB MB)"
         }
         
         # 查找 build 目录
@@ -139,7 +109,7 @@ jobs:
                 Copy-Item $exeFiles.FullName "love2d-chinese/love.exe" -Force
                 $exeFound = $true
                 $sizeMB = [math]::Round((Get-Item "love2d-chinese/love.exe").Length / 1MB, 2)
-                Write-Host "✓ 在build目录找到 love.exe ($sizeMB MB)"
+                Write-Host "在build目录找到 love.exe ($sizeMB MB)"
             }
         }
         
@@ -148,66 +118,30 @@ jobs:
         if ($zipFiles.Count -gt 0) {
             foreach ($zip in $zipFiles) {
                 Copy-Item $zip.FullName "love2d-chinese/$($zip.Name)" -Force
-                Write-Host "✓ 复制打包文件: $($zip.Name)"
+                Write-Host "复制打包文件: $($zip.Name)"
             }
         }
         
-        # 4. 创建使用说明和示例
-        # 创建README
+        # 4. 创建使用说明
         $readme = @'
 Love2D 中文支持版本
-==================
 
-此版本已添加：
-1. 控制台UTF-8编码支持（解决控制台中文乱码）
-2. 内置开源中文字体文件
+此版本已添加控制台UTF-8编码支持
+包含开源中文字体文件
 
 包含文件：
 - love.exe                 主程序
 - chinese-fonts/           中文字体目录
-  ├── SourceHanSansSC-Regular.otf   思源黑体
-  ├── SourceHanSerifSC-Regular.otf  思源宋体
-  └── NotoSansSC-Regular.otf        Noto字体（备用）
 
 使用方法：
 1. 在你的游戏中加载中文字体：
-   
    function love.load()
-       -- 直接加载字体文件
        local font = love.graphics.newFont("chinese-fonts/SourceHanSansSC-Regular.otf", 16)
        love.graphics.setFont(font)
    end
-   
-2. 或者使用安全加载函数：
-   
-   local function loadChineseFont(size)
-       size = size or 16
-       local fonts = {
-           "chinese-fonts/SourceHanSansSC-Regular.otf",
-           "chinese-fonts/SourceHanSerifSC-Regular.otf",
-           "chinese-fonts/NotoSansSC-Regular.otf"
-       }
-       
-       for _, path in ipairs(fonts) do
-           local success, font = pcall(love.graphics.newFont, path, size)
-           if success then
-               return font
-           end
-       end
-       
-       return love.graphics.newFont(size) -- 回退到默认
-   end
 
-3. 控制台现在支持中文输出：
-   
-   print("控制台中文测试: 你好，世界！")
-
-测试：
-运行 demo.lua 查看中文字体效果。
-
-注意：
-- 字体文件仅供个人使用，请遵守字体许可证
-- 思源字体使用SIL开源许可证
+2. 控制台支持中文输出：
+   print("控制台中文测试")
 '@
         
         Set-Content -Path "love2d-chinese/README.txt" -Value $readme -Encoding UTF8
@@ -216,10 +150,7 @@ Love2D 中文支持版本
         $demo = @'
 -- Love2D 中文支持测试 Demo
 function love.load()
-    print("========================================")
     print("Love2D 中文支持测试")
-    print("控制台编码测试: 你好，世界！")
-    print("========================================")
     
     -- 测试加载中文字体
     local function loadChineseFont()
@@ -233,105 +164,51 @@ function love.load()
             local success, font = pcall(love.graphics.newFont, path, 16)
             if success then
                 print("使用字体: " .. path)
-                return font, path
+                return font
             end
         end
         
-        print("警告: 未找到中文字体文件，使用默认字体")
-        return love.graphics.newFont(16), "默认字体"
+        print("使用默认字体")
+        return love.graphics.newFont(16)
     end
     
-    local font, fontName = loadChineseFont()
+    local font = loadChineseFont()
     love.graphics.setFont(font)
-    
-    -- 存储测试文本
-    testFontName = fontName
 end
 
 function love.draw()
     love.graphics.setBackgroundColor(0.1, 0.1, 0.15)
     
-    -- 标题
-    love.graphics.setColor(1, 0.8, 0.2)
-    love.graphics.print("Love2D 中文支持测试", 50, 30)
-    
-    -- 字体信息
-    love.graphics.setColor(0.7, 0.9, 1.0)
-    love.graphics.print("当前字体: " .. testFontName, 50, 60)
-    
-    -- 中文测试
     love.graphics.setColor(1, 1, 1)
-    local y = 100
-    local tests = {
-        "思源黑体测试: 你好，世界！",
-        "中英文混合: Love2D 游戏引擎",
-        "长句子测试: 这是一个用于测试中文字体显示的演示程序",
-        "标点符号: ，。！？；：""（）",
-        "数字字母: 123 ABC abc",
-        "特殊字符: ★☆♫♪☯"
-    }
+    love.graphics.print("Love2D 中文测试", 50, 50)
+    love.graphics.print("思源黑体: 你好，世界！", 50, 80)
+    love.graphics.print("中英文混合: Love2D Game Engine", 50, 110)
     
-    for i, text in ipairs(tests) do
-        love.graphics.print(text, 50, y)
-        y = y + 30
-    end
-    
-    -- 说明
     love.graphics.setColor(0.6, 0.8, 0.6)
-    love.graphics.print("按 ESC 退出程序", 50, y + 30)
+    love.graphics.print("按 ESC 退出", 50, 150)
 end
 
 function love.keypressed(key)
     if key == "escape" then
         love.event.quit()
-    elseif key == "f1" then
-        print("重新加载测试...")
-        love.load()
     end
 end
 '@
         
         Set-Content -Path "love2d-chinese/demo.lua" -Value $demo -Encoding UTF8
         
-        # 创建批处理启动文件
-        $batch = @'
-@echo off
-chcp 65001 > nul
-echo 设置控制台编码为UTF-8
-echo.
-echo 运行Love2D中文测试...
-echo.
-love.exe demo.lua
-pause
-'@
-        
-        Set-Content -Path "love2d-chinese/run-demo.bat" -Value $batch -Encoding ASCII
-        
-        Write-Host "✓ 创建说明文件和示例"
-        
-        # 5. 显示最终目录结构
-        Write-Host "`n最终目录结构:"
-        Get-ChildItem "love2d-chinese" -Recurse | ForEach-Object {
-            if ($_.PSIsContainer) {
-                Write-Host "  [目录] $($_.FullName.Replace($pwd, ''))"
-            } else {
-                $sizeKB = [math]::Round($_.Length / 1KB, 1)
-                Write-Host "  $($_.Name) ($sizeKB KB)"
-            }
-        }
+        Write-Host "创建说明文件和示例"
     
-    # 8. 打包上传
+    # 7. 打包上传
     - name: Package and upload
       run: |
         echo "=== 打包上传 ==="
-        
-        # 创建ZIP包
         Compress-Archive -Path "love2d-chinese/*" -DestinationPath "love2d-chinese-windows.zip" -Force
         
         $zipSize = [math]::Round((Get-Item "love2d-chinese-windows.zip").Length / 1MB, 2)
-        Write-Host "✓ 创建压缩包: love2d-chinese-windows.zip ($zipSize MB)"
+        Write-Host "创建压缩包: love2d-chinese-windows.zip ($zipSize MB)"
     
-    # 9. 上传到Artifacts
+    # 8. 上传到Artifacts
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
@@ -340,4 +217,3 @@ pause
           love2d-chinese-windows.zip
           love2d-chinese/love.exe
           love2d-chinese/chinese-fonts/
-        if-no-files-found: error
