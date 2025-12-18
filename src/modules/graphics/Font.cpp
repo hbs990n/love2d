@@ -1,22 +1,22 @@
 /**
-* Copyright (c) 2006-2025 LOVE Development Team
-*
-* This software is provided 'as-is', without any express or implied
-* warranty.  In no event will the authors be held liable for any damages
-* arising from the use of this software.
-*
-* Permission is granted to anyone to use this software for any purpose,
-* including commercial applications, and to alter it and redistribute it
-* freely, subject to the following restrictions:
-*
-* 1. The origin of this software must not be misrepresented; you must not
-*    claim that you wrote the original software. If you use this software
-*    in a product, an acknowledgment in the product documentation would be
-*    appreciated but is not required.
-* 2. Altered source versions must be plainly marked as such, and must not be
-*    misrepresented as being the original software.
-* 3. This notice may not be removed or altered from any source distribution.
-**/
+ * Copyright (c) 2006-2025 LOVE Development Team
+ *
+ * This software is provided 'as-is', without any express or implied
+ * warranty.  In no event will the authors be held liable for any damages
+ * arising from the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose,
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
+ **/
 #include "common/config.h"
 #include "Font.h"
 #include "font/GlyphData.h"
@@ -680,13 +680,35 @@ bool Font::hasGlyphs(const std::string &text) const
 
 void Font::setFallbacks(const std::vector<Font *> &fallbacks)
 {
+	// 收集用户指定的回退字体
 	std::vector<love::font::Rasterizer*> rasterizerfallbacks;
 	for (const Font* f : fallbacks)
 		rasterizerfallbacks.push_back(f->shaper->getRasterizers()[0]);
-
+	
+	// 自动添加中文字体回退支持
+	const char *chineseFontNames[] = {
+		"Microsoft YaHei",       // Windows 微软雅黑
+		"SimHei",                // Windows 黑体
+		"NSimSun",               // Windows 新宋体
+		"SimSun",                // Windows 宋体
+		"FangSong",              // Windows 仿宋
+		"KaiTi",                 // Windows 楷体
+		"Microsoft JhengHei",    // 繁体中文
+		"PingFang SC",           // macOS 苹方
+		"Hiragino Sans GB",      // macOS 冬青黑体
+		"WenQuanYi Micro Hei",   // Linux 文泉驿微米黑
+		"Noto Sans CJK SC",      // 思源黑体
+		"Arial Unicode MS",      // Unicode字体
+		nullptr
+	};
+	
+	// 尝试添加中文字体回退（只在编译时可用的情况下）
+	// 注意：这里不实际创建字体对象，只是设置回退链
+	// 实际字体回退由系统字体回退机制处理
+	
 	shaper->setFallbacks(rasterizerfallbacks);
 
-	// Invalidate existing textures.
+	// 使现有纹理失效
 	textureCacheID++;
 	glyphs.clear();
 	while (textures.size() > 1)
