@@ -1,4 +1,4 @@
-name: Build Love2D Windows (修正版)
+name: Build Love2D Windows (带NSIS)
 
 on:
   workflow_dispatch:
@@ -8,81 +8,59 @@ jobs:
     runs-on: windows-2025
     
     steps:
-    # 1. 克隆 megasource
+    # 1. 安装NSIS
+    - name: Install NSIS
+      run: winget install nsis --disable-interactivity --accept-source-agreements --accept-package-agreements
+    
+    # 2. 克隆仓库
     - name: Clone Megasource
       uses: actions/checkout@v4
       with:
         repository: love2d/megasource
         path: megasource
     
-    # 2. 克隆你的 love2d
     - name: Clone Love2D
       uses: actions/checkout@v4
       with:
         path: megasource/libs/love
     
-    # 3. 配置CMake（使用绝对路径）
-    - name: Configure CMake
+    # 3. 配置和编译
+    - name: Configure and Build
       run: |
         cd megasource
-        # 获取当前绝对路径
-        $currentDir = (Get-Location).Path
-        $installPath = "$currentDir\install"
-        Write-Host "安装路径: $installPath"
-        
-        cmake -B build -S . -T v143 -A x64 --install-prefix "$installPath"
-    
-    # 4. 编译PACKAGE目标
-    - name: Build Package
-      run: |
-        cd megasource
+        cmake -B build -S . -T v143 -A x64
         cmake --build build --config Release --target PACKAGE
     
-    # 5. 查找生成的文件
-    - name: Find Generated Files
+    # 4. 收集结果
+    - name: Collect Results
       run: |
-        echo "=== 查找生成的文件 ==="
-        cd megasource
+        echo "=== 编译结果 ==="
         
-        # 列出build目录内容
-        Write-Host "build目录内容:"
-        Get-ChildItem build -File | Select-Object -First 10
+        # 找到生成的ZIP文件
+        if (Test-Path "megasource/build/love-12.0-win64.zip") {
+            $zipFile = Get-Item "megasource/build/love-12.0-win64.zip"
+            $sizeMB = [math]::Round($zipFile.Length / 1MB, 2)
+            Write-Host "✅ 找到ZIP包: $($zipFile.Name) ($sizeMB MB)"
+            Copy-Item $zipFile.FullName .\
+        }
         
-        # 查找exe和zip文件
-        $exeFiles = Get-ChildItem -Path build -Recurse -Filter "*.exe" -File
-        $zipFiles = Get-ChildItem -Path build -Recurse -Filter "*.zip" -File
-        
-        Write-Host "找到 $($exeFiles.Count) 个exe文件"
-        Write-Host "找到 $($zipFiles.Count) 个zip文件"
-        
+        # 查找exe文件
+        $exeFiles = Get-ChildItem -Path megasource -Recurse -Filter "love.exe" -File
         if ($exeFiles.Count -gt 0) {
             foreach ($exe in $exeFiles) {
                 $sizeMB = [math]::Round($exe.Length / 1MB, 2)
-                Write-Host "  - $($exe.Name) ($sizeMB MB)"
-                # 复制最大的exe文件
+                Write-Host "找到: $($exe.FullName) ($sizeMB MB)"
                 if ($sizeMB -gt 5) {
-                    Copy-Item $exe.FullName ..\love_big.exe -Force
-                    Write-Host "    ✓ 复制为 love_big.exe"
+                    Copy-Item $exe.FullName .\love_big.exe
                 }
             }
         }
-        
-        if ($zipFiles.Count -gt 0) {
-            foreach ($zip in $zipFiles) {
-                $sizeMB = [math]::Round($zip.Length / 1MB, 2)
-                Write-Host "  - $($zip.Name) ($sizeMB MB)"
-                Copy-Item $zip.FullName ..\
-            }
-        }
     
-    # 6. 上传结果
-    - name: Upload Results
+    - name: Upload
       uses: actions/upload-artifact@v4
       with:
-        name: love2d-build-output
+        name: love2d-complete
         path: |
-          *.exe
           *.zip
-          megasource/build/*.exe
-          megasource/build/*.zip
-        if-no-files-found: warn
+          *.exe
+        if-no-files-found: error
