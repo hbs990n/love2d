@@ -304,12 +304,18 @@ static DoneAction runlove(int argc, char **argv, int &retval, love::Variant &res
 
 int main(int argc, char **argv)
 {
-	if (strcmp(LOVE_VERSION_STRING, love_version()) != 0)
-	{
-		printf("Version mismatch detected!\nLOVE binary is version %s\n"
-			   "LOVE library is version %s\n", LOVE_VERSION_STRING, love_version());
-		return 1;
-	}
+#ifdef LOVE_WINDOWS
+    // 设置控制台编码为UTF-8支持中文
+    SetConsoleOutputCP(65001);
+    SetConsoleCP(65001);
+#endif
+
+    if (strcmp(LOVE_VERSION_STRING, love_version()) != 0)
+    {
+        printf("Version mismatch detected!\nLOVE binary is version %s\n"
+               "LOVE library is version %s\n", LOVE_VERSION_STRING, love_version());
+        return 1;
+    }
 
 	int retval = 0;
 	DoneAction done = DONE_QUIT;
