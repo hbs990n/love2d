@@ -21,199 +21,71 @@ jobs:
       with:
         path: megasource/libs/love
     
-    # 3. 下载开源中文字体
-    - name: Download open-source Chinese fonts
+    # 3. 下载字体（只下载思源黑体，最常用）
+    - name: Download Chinese font
       run: |
-        echo "=== 下载开源中文字体 ==="
+        mkdir -Force "megasource/chinese-fonts"
         
-        # 在megasource目录创建字体目录
-        $fontDir = "megasource/chinese-fonts"
-        mkdir -Force $fontDir
+        # 只下载一个字体，减少体积和复杂度
+        curl -L -o "megasource/chinese-fonts/SourceHanSansSC-Regular.otf" ^
+          "https://github.com/adobe-fonts/source-han-sans/raw/release/OTF/SimplifiedChinese/SourceHanSansSC-Regular.otf"
         
-        # 字体下载URLs
-        $fontUrls = @{
-            "SourceHanSansSC-Regular.otf" = "https://github.com/adobe-fonts/source-han-sans/raw/release/OTF/SimplifiedChinese/SourceHanSansSC-Regular.otf"
-            "SourceHanSerifSC-Regular.otf" = "https://github.com/adobe-fonts/source-han-serif/raw/release/OTF/SimplifiedChinese/SourceHanSerifSC-Regular.otf"
-            "NotoSansSC-Regular.otf" = "https://github.com/googlefonts/noto-cjk/raw/main/Sans/OTF/SimplifiedChinese/NotoSansSC-Regular.otf"
-        }
-        
-        # 下载字体
-        foreach ($fontName in $fontUrls.Keys) {
-            $url = $fontUrls[$fontName]
-            $output = "$fontDir/$fontName"
-            
-            Write-Host "下载: $fontName"
-            try {
-                curl -L -o $output $url --silent
-                if (Test-Path $output) {
-                    $size = (Get-Item $output).Length / 1MB
-                    Write-Host "  成功 ($([math]::Round($size, 2)) MB)"
-                } else {
-                    Write-Host "  下载失败"
-                }
-            } catch {
-                Write-Host "  下载错误"
-            }
-        }
-        
-        # 验证下载结果
-        Write-Host "`n下载完成，字体文件:"
-        Get-ChildItem $fontDir | ForEach-Object {
-            $sizeMB = [math]::Round($_.Length / 1MB, 2)
-            Write-Host "  - $($_.Name) ($sizeMB MB)"
-        }
+        echo "字体下载完成"
     
     # 4. 配置CMake
     - name: Configure CMake
       run: |
         cd megasource
-        cmake -B build -S . -T v143 -A x64,version=10.0.26100.0 --install-prefix install
+        cmake -B build -S . -T v143 -A x64 --install-prefix install
     
     # 5. 编译
     - name: Build
       run: |
         cd megasource
         cmake --build build --config Release --target PACKAGE
-        cmake --build build --config Release --target install
     
-    # 6. 收集和整理编译结果
-    - name: Collect and organize build results
+    # 6. 整理输出
+    - name: Prepare output
       run: |
-        echo "=== 整理编译结果 ==="
+        # 创建干净的输出目录
+        mkdir -Force "output"
         
-        # 创建输出目录结构
-        mkdir -Force "love2d-chinese"
-        mkdir -Force "love2d-chinese/chinese-fonts"
-        
-        # 1. 复制字体文件
+        # 复制字体
         if (Test-Path "megasource/chinese-fonts") {
-            Copy-Item "megasource/chinese-fonts/*" "love2d-chinese/chinese-fonts/" -Force
-            Write-Host "复制中文字体"
+          Copy-Item "megasource/chinese-fonts" "output/" -Recurse -Force
         }
         
-        # 2. 查找并复制可执行文件
-        $exeFound = $false
+        # 查找并复制exe文件
+        $exePath = $null
         
-        # 查找 install 目录
+        # 先找install目录
         if (Test-Path "megasource/install/bin/love.exe") {
-            Copy-Item "megasource/install/bin/love.exe" "love2d-chinese/love.exe" -Force
-            $exeFound = $true
-            $sizeMB = [math]::Round((Get-Item "love2d-chinese/love.exe").Length / 1MB, 2)
-            Write-Host "找到 love.exe ($sizeMB MB)"
+          $exePath = "megasource/install/bin/love.exe"
+        }
+        # 再找build目录
+        elseif (Test-Path "megasource/build/Release/love.exe") {
+          $exePath = "megasource/build/Release/love.exe"
+        }
+        # 最后搜索
+        else {
+          $found = Get-ChildItem -Path "megasource/build" -Recurse -Filter "love.exe" -File | Select-Object -First 1
+          if ($found) {
+            $exePath = $found.FullName
+          }
         }
         
-        # 查找 build 目录
-        if (-not $exeFound) {
-            $exeFiles = Get-ChildItem -Path "megasource/build" -Recurse -Filter "love.exe" -File | Select-Object -First 1
-            if ($exeFiles) {
-                Copy-Item $exeFiles.FullName "love2d-chinese/love.exe" -Force
-                $exeFound = $true
-                $sizeMB = [math]::Round((Get-Item "love2d-chinese/love.exe").Length / 1MB, 2)
-                Write-Host "在build目录找到 love.exe ($sizeMB MB)"
-            }
+        if ($exePath) {
+          Copy-Item $exePath "output/love.exe" -Force
+          $sizeMB = [math]::Round((Get-Item $exePath).Length / 1MB, 2)
+          echo "找到 love.exe ($sizeMB MB)"
+        } else {
+          echo "警告: 未找到 love.exe"
         }
-        
-        # 3. 查找ZIP打包文件
-        $zipFiles = Get-ChildItem -Path "megasource/build" -Filter "*.zip" -File
-        if ($zipFiles.Count -gt 0) {
-            foreach ($zip in $zipFiles) {
-                Copy-Item $zip.FullName "love2d-chinese/$($zip.Name)" -Force
-                Write-Host "复制打包文件: $($zip.Name)"
-            }
-        }
-        
-        # 4. 创建使用说明
-        $readme = @'
-Love2D 中文支持版本
-
-此版本已添加控制台UTF-8编码支持
-包含开源中文字体文件
-
-包含文件：
-- love.exe                 主程序
-- chinese-fonts/           中文字体目录
-
-使用方法：
-1. 在你的游戏中加载中文字体：
-   function love.load()
-       local font = love.graphics.newFont("chinese-fonts/SourceHanSansSC-Regular.otf", 16)
-       love.graphics.setFont(font)
-   end
-
-2. 控制台支持中文输出：
-   print("控制台中文测试")
-'@
-        
-        Set-Content -Path "love2d-chinese/README.txt" -Value $readme -Encoding UTF8
-        
-        # 创建示例demo
-        $demo = @'
--- Love2D 中文支持测试 Demo
-function love.load()
-    print("Love2D 中文支持测试")
     
-    -- 测试加载中文字体
-    local function loadChineseFont()
-        local fontPaths = {
-            "chinese-fonts/SourceHanSansSC-Regular.otf",
-            "chinese-fonts/SourceHanSerifSC-Regular.otf",
-            "chinese-fonts/NotoSansSC-Regular.otf"
-        }
-        
-        for i, path in ipairs(fontPaths) do
-            local success, font = pcall(love.graphics.newFont, path, 16)
-            if success then
-                print("使用字体: " .. path)
-                return font
-            end
-        end
-        
-        print("使用默认字体")
-        return love.graphics.newFont(16)
-    end
-    
-    local font = loadChineseFont()
-    love.graphics.setFont(font)
-end
-
-function love.draw()
-    love.graphics.setBackgroundColor(0.1, 0.1, 0.15)
-    
-    love.graphics.setColor(1, 1, 1)
-    love.graphics.print("Love2D 中文测试", 50, 50)
-    love.graphics.print("思源黑体: 你好，世界！", 50, 80)
-    love.graphics.print("中英文混合: Love2D Game Engine", 50, 110)
-    
-    love.graphics.setColor(0.6, 0.8, 0.6)
-    love.graphics.print("按 ESC 退出", 50, 150)
-end
-
-function love.keypressed(key)
-    if key == "escape" then
-        love.event.quit()
-    end
-end
-'@
-        
-        Set-Content -Path "love2d-chinese/demo.lua" -Value $demo -Encoding UTF8
-        
-        Write-Host "创建说明文件和示例"
-    
-    # 7. 打包上传
-    - name: Package and upload
-      run: |
-        echo "=== 打包上传 ==="
-        Compress-Archive -Path "love2d-chinese/*" -DestinationPath "love2d-chinese-windows.zip" -Force
-        
-        $zipSize = [math]::Round((Get-Item "love2d-chinese-windows.zip").Length / 1MB, 2)
-        Write-Host "创建压缩包: love2d-chinese-windows.zip ($zipSize MB)"
-    
-    # 8. 上传到Artifacts
-    - name: Upload artifacts
+    # 7. 上传结果
+    - name: Upload result
       uses: actions/upload-artifact@v4
       with:
-        name: love2d-chinese-windows
+        name: love2d-chinese-simple
         path: |
-          love2d-chinese-windows.zip
-          love2d-chinese/love.exe
-          love2d-chinese/chinese-fonts/
+          output/
