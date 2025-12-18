@@ -1,4 +1,4 @@
-name: Build Love2D with Complete Chinese Support
+name: Build Love2D with Chinese Support
 
 on:
   workflow_dispatch:
@@ -21,28 +21,18 @@ jobs:
       with:
         path: megasource/libs/love
     
-    # 3. 下载开源中文字体
+    # 3. 下载中文字体
     - name: Download Chinese fonts
       run: |
-        echo "=== 下载中文字体 ==="
         mkdir -Force "fonts"
-        
-        # 下载思源黑体
-        curl -L -o "fonts/SourceHanSansSC-Regular.otf" ^
-            "https://github.com/adobe-fonts/source-han-sans/raw/release/OTF/SimplifiedChinese/SourceHanSansSC-Regular.otf"
-        
-        # 下载思源宋体（备用）
-        curl -L -o "fonts/SourceHanSerifSC-Regular.otf" ^
-            "https://github.com/adobe-fonts/source-han-serif/raw/release/OTF/SimplifiedChinese/SourceHanSerifSC-Regular.otf"
-        
-        echo "字体下载完成"
+        curl -L -o "fonts/SourceHanSansSC-Regular.otf" "https://github.com/adobe-fonts/source-han-sans/raw/release/OTF/SimplifiedChinese/SourceHanSansSC-Regular.otf"
+        curl -L -o "fonts/SourceHanSerifSC-Regular.otf" "https://github.com/adobe-fonts/source-han-serif/raw/release/OTF/SimplifiedChinese/SourceHanSerifSC-Regular.otf"
     
-    # 4. 复制字体到 megasource 目录
-    - name: Copy fonts to megasource
+    # 4. 复制字体
+    - name: Copy fonts
       run: |
         if (Test-Path "fonts") {
             Copy-Item "fonts" "megasource/" -Recurse -Force
-            echo "字体已复制到 megasource/fonts/"
         }
     
     # 5. 配置CMake
@@ -57,102 +47,50 @@ jobs:
         cd megasource
         cmake --build build --config Release
     
-    # 7. 查找并准备可执行文件
-    - name: Find and prepare executable
+    # 7. 查找可执行文件
+    - name: Find executable
       run: |
-        echo "=== 查找编译结果 ==="
-        
-        # 在常见位置查找
-        $possiblePaths = @(
-            "megasource/build/src/Release/love.exe",
-            "megasource/build/Release/love.exe",
-            "megasource/build/love.exe",
-            "megasource/install/bin/love.exe"
-        )
-        
         $found = $false
-        foreach ($path in $possiblePaths) {
-            if (Test-Path $path) {
-                $file = Get-Item $path
-                $sizeMB = [math]::Round($file.Length / 1MB, 2)
-                Write-Host "找到: $path ($sizeMB MB)"
-                
-                Copy-Item $path "love.exe" -Force
+        @("megasource/build/src/Release/love.exe", 
+          "megasource/build/Release/love.exe",
+          "megasource/build/love.exe") | ForEach-Object {
+            if ((Test-Path $_) -and -not $found) {
+                Copy-Item $_ "love.exe" -Force
                 $found = $true
-                break
+                Write-Host "找到: $_"
             }
         }
         
         if (-not $found) {
-            Write-Host "在标准位置未找到，开始搜索..."
-            $exeFiles = Get-ChildItem -Path "megasource" -Recurse -Filter "love.exe" -File
-            if ($exeFiles.Count -gt 0) {
-                $largest = $exeFiles | Sort-Object Length -Descending | Select-Object -First 1
-                Copy-Item $largest.FullName "love.exe" -Force
-                $sizeMB = [math]::Round($largest.Length / 1MB, 2)
-                Write-Host "找到: $($largest.FullName) ($sizeMB MB)"
-                $found = $true
+            $exe = Get-ChildItem -Path "megasource" -Recurse -Filter "love.exe" -File | Select-Object -First 1
+            if ($exe) {
+                Copy-Item $exe.FullName "love.exe" -Force
+                Write-Host "找到: $($exe.FullName)"
             }
         }
         
-        if ($found) {
-            # 验证文件大小
-            $finalSize = (Get-Item "love.exe").Length
-            $finalSizeMB = [math]::Round($finalSize / 1MB, 2)
-            Write-Host "✅ 最终文件: love.exe ($finalSizeMB MB)"
-            
-            if ($finalSizeMB -lt 5) {
-                Write-Host "⚠ 警告: 文件可能不完整"
-            }
-        } else {
-            Write-Host "❌ 未找到可执行文件"
+        if (Test-Path "love.exe") {
+            $size = (Get-Item "love.exe").Length / 1MB
+            Write-Host "文件大小: $([math]::Round($size, 2)) MB"
         }
     
-    # 8. 创建测试文件
-    - name: Create test files
+    # 8. 创建测试
+    - name: Create test
       run: |
-        echo "=== 创建测试文件 ==="
-        
-        # 创建最简单的测试
-        $testCode = @'
+        $test = @'
 function love.draw()
-    love.graphics.print("测试: 你好", 100, 100)
+    love.graphics.print("测试中文", 100, 100)
 end
 '@
-        Set-Content -Path "simple-test.lua" -Value $testCode -Encoding UTF8
-        
-        # 创建字体测试
-        $fontTest = @'
-function love.load()
-    print("控制台测试: 中文输出")
+        Set-Content -Path "test.lua" -Value $test -Encoding UTF8
     
-    -- 尝试加载字体
-    local success, font = pcall(love.graphics.newFont, "Microsoft YaHei", 16)
-    if success then
-        love.graphics.setFont(font)
-        print("成功加载微软雅黑")
-    else
-        print("无法加载微软雅黑，使用默认字体")
-    end
-end
-
-function love.draw()
-    love.graphics.print("字体测试: 你好，世界！", 50, 50)
-    love.graphics.print("Love2D 中文支持", 50, 80)
-end
-'@
-        Set-Content -Path "font-test.lua" -Value $fontTest -Encoding UTF8
-        
-        echo "测试文件创建完成"
-    
-    # 9. 上传结果
-    - name: Upload artifacts
+    # 9. 上传
+    - name: Upload
       uses: actions/upload-artifact@v4
       with:
-        name: love2d-chinese-build
+        name: love2d-build
         path: |
           love.exe
-          simple-test.lua
-          font-test.lua
+          test.lua
           fonts/
         if-no-files-found: warn
