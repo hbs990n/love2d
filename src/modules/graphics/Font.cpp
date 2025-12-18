@@ -253,7 +253,7 @@ const Font::Glyph &Font::addGlyph(love::font::TextShaper::GlyphIndex glyphindex)
 		}
 
 		if (textureY + h + TEXTURE_PADDING > textureHeight)
-		{
+	{
 			// Totally out of space - new texture!
 			createTexture();
 
@@ -678,6 +678,79 @@ bool Font::hasGlyphs(const std::string &text) const
 	return shaper->hasGlyphs(text);
 }
 
+// 尝试自动添加中文字体回退的辅助函数
+static bool tryAddChineseFontFallbackInternal(love::font::TextShaper* shaper)
+{
+    // 常见中文字体列表，按优先级排序
+    const char* chineseFontNames[] = {
+        "Microsoft YaHei",       // Windows 微软雅黑 (Vista+)
+        "SimHei",                // Windows 黑体
+        "SimSun",                // Windows 宋体
+        "NSimSun",               // Windows 新宋体
+        "FangSong",              // Windows 仿宋
+        "KaiTi",                 // Windows 楷体
+        "Microsoft JhengHei",    // 繁体中文
+        "Segoe UI",              // Windows 10+ 默认字体，也支持中文
+        "Arial Unicode MS",      // Unicode字体，包含中文
+        "Tahoma",                // 备选字体
+        nullptr
+    };
+    
+    // 获取当前的光栅器列表
+    const auto& currentRasters = shaper->getRasterizers();
+    
+    // 检查当前主字体是否已经是中文字体
+    if (currentRasters.size() > 0) {
+        love::font::Rasterizer* mainRaster = currentRasters[0];
+        
+        // 简单检查：如果主字体能显示中文，就不需要回退
+        if (mainRaster->hasGlyph(L'中') && mainRaster->hasGlyph(L'文')) {
+            return true; // 已经是中文字体
+        }
+    }
+    
+    // 尝试创建中文字体回退
+    for (int i = 0; chineseFontNames[i] != nullptr; i++) {
+        try {
+            // 尝试创建字体光栅器
+            love::font::Rasterizer* chineseRaster = 
+                love::font::Rasterizer::createForFontName(chineseFontNames[i], 12);
+            
+            if (chineseRaster) {
+                // 检查是否真的支持中文
+                if (chineseRaster->hasGlyph(L'中') || chineseRaster->hasGlyph(0x4E2D)) {
+                    // 创建回退列表
+                    std::vector<love::font::Rasterizer*> fallbacks = { chineseRaster };
+                    
+                    // 添加到现有的回退链
+                    std::vector<love::font::Rasterizer*> allFallbacks = fallbacks;
+                    
+                    // 添加现有的回退（如果有）
+                    if (currentRasters.size() > 1) {
+                        for (size_t j = 1; j < currentRasters.size(); j++) {
+                            allFallbacks.push_back(currentRasters[j]);
+                        }
+                    }
+                    
+                    // 设置新的回退链
+                    shaper->setFallbacks(allFallbacks);
+                    
+                    // 只添加一个中文字体就足够
+                    return true;
+                }
+                
+                // 不支持中文，释放资源
+                chineseRaster->release();
+            }
+        } catch (...) {
+            // 创建失败，继续尝试下一个字体
+            continue;
+        }
+    }
+    
+    return false;
+}
+
 void Font::setFallbacks(const std::vector<Font *> &fallbacks)
 {
 	// 收集用户指定的回退字体
@@ -685,28 +758,13 @@ void Font::setFallbacks(const std::vector<Font *> &fallbacks)
 	for (const Font* f : fallbacks)
 		rasterizerfallbacks.push_back(f->shaper->getRasterizers()[0]);
 	
-	// 自动添加中文字体回退支持
-	const char *chineseFontNames[] = {
-		"Microsoft YaHei",       // Windows 微软雅黑
-		"SimHei",                // Windows 黑体
-		"NSimSun",               // Windows 新宋体
-		"SimSun",                // Windows 宋体
-		"FangSong",              // Windows 仿宋
-		"KaiTi",                 // Windows 楷体
-		"Microsoft JhengHei",    // 繁体中文
-		"PingFang SC",           // macOS 苹方
-		"Hiragino Sans GB",      // macOS 冬青黑体
-		"WenQuanYi Micro Hei",   // Linux 文泉驿微米黑
-		"Noto Sans CJK SC",      // 思源黑体
-		"Arial Unicode MS",      // Unicode字体
-		nullptr
-	};
-	
-	// 尝试添加中文字体回退（只在编译时可用的情况下）
-	// 注意：这里不实际创建字体对象，只是设置回退链
-	// 实际字体回退由系统字体回退机制处理
-	
-	shaper->setFallbacks(rasterizerfallbacks);
+	// 如果用户没有指定回退字体，尝试自动添加中文字体回退
+	if (fallbacks.empty()) {
+		tryAddChineseFontFallbackInternal(shaper);
+	} else {
+		// 用户指定了回退，使用用户的设置
+		shaper->setFallbacks(rasterizerfallbacks);
+	}
 
 	// 使现有纹理失效
 	textureCacheID++;
@@ -715,6 +773,29 @@ void Font::setFallbacks(const std::vector<Font *> &fallbacks)
 		textures.pop_back();
 
 	rowHeight = textureX = textureY = TEXTURE_PADDING;
+}
+
+// 在构造函数中自动尝试添加中文字体回退
+void Font::initChineseSupport()
+{
+    // 延迟初始化中文字体支持
+    // 这个函数可以被构造函数调用，或者在字体首次使用时调用
+    static bool chineseSupportInitialized = false;
+    
+    if (!chineseSupportInitialized) {
+        // 检查当前字体是否支持中文
+        const auto& rasters = shaper->getRasterizers();
+        if (rasters.size() > 0) {
+            love::font::Rasterizer* mainRaster = rasters[0];
+            
+            // 如果主字体不支持中文，尝试添加回退
+            if (!mainRaster->hasGlyph(L'中')) {
+                tryAddChineseFontFallbackInternal(shaper);
+            }
+        }
+        
+        chineseSupportInitialized = true;
+    }
 }
 
 float Font::getDPIScale() const
