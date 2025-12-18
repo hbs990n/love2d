@@ -1,89 +1,108 @@
-name: Build Love2D with Chinese Support
+name: Build Love2D Windows (完整版)
 
 on:
-  workflow_dispatch:
+  workflow_dispatch:  # 只手动运行
 
 jobs:
-  build-windows-chinese:
-    runs-on: windows-latest
+  build:
+    runs-on: windows-latest  # 使用Windows环境
     
     steps:
-    - name: Clone Megasource
+    # 第一步：克隆 megasource 库
+    - name: Clone megasource (依赖库)
       uses: actions/checkout@v4
       with:
         repository: love2d/megasource
         path: megasource
-        submodules: true
+        submodules: recursive  # 重要：获取子模块
     
-    - name: Checkout Love2D
+    # 第二步：克隆你的 love2d 代码到正确位置
+    - name: Clone your love2d into megasource
       uses: actions/checkout@v4
       with:
         path: megasource/libs/love
     
-    - name: Patch for Chinese support
-      run: |
-        echo "=== Patching for Chinese support ==="
-        
-        # 修复字体配置
-        $fontConfig = "megasource/libs/love/src/modules/graphics/opengl/Font.cpp"
-        if (Test-Path $fontConfig) {
-            Copy-Item $fontConfig "$fontConfig.backup"
-            (Get-Content $fontConfig) | ForEach-Object {
-                if ($_ -match 'std::vector<std::string> fallbacks;') {
-                    'std::vector<std::string> fallbacks = {"Microsoft YaHei", "SimHei", "NSimSun", "FangSong", "KaiTi", "SimSun", "Microsoft JhengHei"};'
-                } else {
-                    $_
-                }
-            } | Set-Content $fontConfig
-            Write-Host "✓ Font fallback chain updated"
-        }
-    
-    - name: Configure CMake
+    # 第三步：配置 CMake (关键步骤)
+    - name: Configure CMake properly
       run: |
         cd megasource
-        cmake -B build -S . -G "Visual Studio 17 2022" -A x64 -DCMAKE_BUILD_TYPE=Release
+        # 重要：必须指定安装目录
+        cmake -B build -S . ^
+          -G "Visual Studio 17 2022" ^
+          -A x64 ^
+          --install-prefix install
     
-    - name: Build
+    # 第四步：编译并安装 (关键步骤)
+    - name: Build and install
       run: |
         cd megasource
-        cmake --build build --config Release --target love
-    
-    - name: Find executable
-      run: |
-        echo "=== Searching for executable ==="
+        # 重要：使用 install 目标，这会生成完整exe
+        cmake --build build --config Release --target install
         
-        $exeFiles = @()
-        if (Test-Path "megasource/build/src/Release/love.exe") {
-            $exeFiles += "megasource/build/src/Release/love.exe"
+        # 检查文件大小
+        echo "检查编译结果..."
+        if (Test-Path "install/bin/love.exe") {
+            $file = Get-Item "install/bin/love.exe"
+            $sizeMB = [math]::Round($file.Length / 1MB, 2)
+            echo "✅ love.exe 大小: $sizeMB MB"
+            if ($sizeMB -lt 5) {
+                echo "⚠ 警告：文件可能不完整"
+            }
+        } else {
+            echo "❌ 未找到 love.exe"
         }
-        if (Test-Path "megasource/build/Release/love.exe") {
-            $exeFiles += "megasource/build/Release/love.exe"
-        }
+    
+    # 第五步：查找和准备文件
+    - name: Prepare files for upload
+      run: |
+        echo "=== 准备上传文件 ==="
+        
+        # 首先检查 install 目录
         if (Test-Path "megasource/install/bin/love.exe") {
-            $exeFiles += "megasource/install/bin/love.exe"
+            $source = "megasource/install/bin/love.exe"
+        } 
+        # 如果没有，检查 build 目录
+        elseif (Test-Path "megasource/build/Release/love.exe") {
+            $source = "megasource/build/Release/love.exe"
         }
-        
-        if ($exeFiles.Count -eq 0) {
-            # 搜索所有exe文件
+        elseif (Test-Path "megasource/build/src/Release/love.exe") {
+            $source = "megasource/build/src/Release/love.exe"
+        }
+        else {
+            # 最后尝试搜索
             $allExes = Get-ChildItem -Path megasource -Recurse -Filter "*.exe" -File
             if ($allExes.Count -gt 0) {
                 $largest = $allExes | Sort-Object Length -Descending | Select-Object -First 1
-                $exeFiles += $largest.FullName
+                $source = $largest.FullName
+                echo "找到: $source"
+            } else {
+                echo "❌ 未找到任何exe文件"
+                exit 1
             }
         }
         
-        if ($exeFiles.Count -gt 0) {
-            $source = $exeFiles[0]
-            Copy-Item $source .\love.exe -Force
-            $size = (Get-Item .\love.exe).Length
-            $sizeMB = [math]::Round($size / 1MB, 2)
-            Write-Host "✓ Found: $source ($sizeMB MB)"
-        } else {
-            Write-Host "❌ No executable found"
+        # 复制到根目录
+        Copy-Item $source .\love.exe -Force
+        
+        # 显示文件信息
+        $file = Get-Item .\love.exe
+        $sizeMB = [math]::Round($file.Length / 1MB, 2)
+        echo "✅ 准备上传: love.exe ($sizeMB MB)"
+        
+        # 如果是小文件，列出所有可能的大文件
+        if ($sizeMB -lt 5) {
+            echo "⚠ 文件较小，列出所有exe文件："
+            Get-ChildItem -Path megasource -Recurse -Filter "*.exe" -File | ForEach-Object {
+                $fileSize = [math]::Round($_.Length / 1MB, 2)
+                echo "  - $($_.FullName) ($fileSize MB)"
+            }
         }
     
-    - name: Upload result
+    # 第六步：上传结果
+    - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
-        name: love2d-chinese
-        path: love.exe
+        name: love2d-windows-full
+        path: |
+          love.exe
+        if-no-files-found: error
