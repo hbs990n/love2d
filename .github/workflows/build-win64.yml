@@ -8,7 +8,6 @@ jobs:
     runs-on: windows-latest
     
     steps:
-    # 1. 克隆 megasource
     - name: Clone Megasource
       uses: actions/checkout@v4
       with:
@@ -16,251 +15,75 @@ jobs:
         path: megasource
         submodules: true
     
-    # 2. 克隆你的love2d代码
     - name: Checkout Love2D
       uses: actions/checkout@v4
       with:
         path: megasource/libs/love
     
-    # 3. 修改源码以支持中文
     - name: Patch for Chinese support
       run: |
-        echo "=== 为中文支持打补丁 ==="
+        echo "=== Patching for Chinese support ==="
         
-        # 修改字体渲染配置，添加中文字体支持
+        # 修复字体配置
         $fontConfig = "megasource/libs/love/src/modules/graphics/opengl/Font.cpp"
         if (Test-Path $fontConfig) {
-            # 备份原文件
             Copy-Item $fontConfig "$fontConfig.backup"
-            
-            # 添加中文字体回退链
-            (Get-Content $fontConfig) -replace 
-                'std::vector<std::string> fallbacks;', 
-                'std::vector<std::string> fallbacks = {"Microsoft YaHei", "SimHei", "NSimSun", "FangSong", "KaiTi", "SimSun", "Microsoft JhengHei"};' |
-            Set-Content $fontConfig
-            
-            Write-Host "✓ 已修改字体回退链支持中文"
-        }
-        
-        # 修改控制台编码设置（如果存在相关代码）
-        $consoleConfig = "megasource/libs/love/src/common/Exception.cpp"
-        if (Test-Path $consoleConfig) {
-            # 设置控制台代码页为UTF-8
-            $utf8Patch = @'
-// 设置控制台代码页为UTF-8以支持中文
-#ifdef _WIN32
-#include <windows.h>
-#endif
-'@
-            
-            $content = Get-Content $consoleConfig -Raw
-            if ($content -notmatch "SetConsoleOutputCP") {
-                $content = $content -replace '(#include.*)', "$1`n$utf8Patch"
-                $content = $content -replace '(int main.*\{)', "$1`n#ifdef _WIN32`n    SetConsoleOutputCP(65001); // UTF-8`n    SetConsoleCP(65001);`n#endif"
-                Set-Content $consoleConfig $content -Encoding UTF8
-                Write-Host "✓ 已添加控制台UTF-8支持"
-            }
+            (Get-Content $fontConfig) | ForEach-Object {
+                if ($_ -match 'std::vector<std::string> fallbacks;') {
+                    'std::vector<std::string> fallbacks = {"Microsoft YaHei", "SimHei", "NSimSun", "FangSong", "KaiTi", "SimSun", "Microsoft JhengHei"};'
+                } else {
+                    $_
+                }
+            } | Set-Content $fontConfig
+            Write-Host "✓ Font fallback chain updated"
         }
     
-    # 4. 添加中文字体到资源中
-    - name: Add Chinese fonts to resources
-      run: |
-        echo "=== 添加中文字体资源 ==="
-        
-        # 创建字体目录
-        mkdir -Force "chinese-fonts"
-        
-        # 尝试从系统复制中文字体（在GitHub Actions中可能有限制）
-        # 这里我们使用开源中文字体作为后备
-        $fontUrls = @(
-            "https://github.com/adobe-fonts/source-han-sans/raw/release/OTF/SimplifiedChinese/SourceHanSansSC-Regular.otf",
-            "https://github.com/adobe-fonts/source-han-serif/raw/release/OTF/SimplifiedChinese/SourceHanSerifSC-Regular.otf"
-        )
-        
-        foreach ($url in $fontUrls) {
-            $fontName = $url.Split('/')[-1]
-            try {
-                curl -L -o "chinese-fonts/$fontName" $url
-                Write-Host "✓ 下载字体: $fontName"
-            } catch {
-                Write-Host "⚠ 无法下载字体: $fontName"
-            }
-        }
-        
-        # 创建字体配置文件
-        $fontConfigContent = @'
--- 中文字体配置文件
--- 将以下内容添加到你的LÖVE项目中
-
-local chineseFonts = {
-    "SourceHanSansSC-Regular.otf",
-    "SourceHanSerifSC-Regular.otf",
-    "Microsoft YaHei",
-    "SimHei",
-    "SimSun"
-}
-
--- 使用中文字体的示例
-function loadChineseFont()
-    for _, fontName in ipairs(chineseFonts) do
-        local success, font = pcall(love.graphics.newFont, fontName, 12)
-        if success then
-            love.graphics.setFont(font)
-            print("使用字体: " .. fontName)
-            return font
-        end
-    end
-    print("警告: 未找到中文字体，使用默认字体")
-    return love.graphics.getFont()
-end
-'@
-        
-        Set-Content -Path "chinese-fonts/README.txt" -Value $fontConfigContent -Encoding UTF8
-    
-    # 5. 配置CMake，启用完整功能
-    - name: Configure CMake with full features
+    - name: Configure CMake
       run: |
         cd megasource
-        # 启用所有功能，特别是字体相关功能
-        cmake -B build -S . -G "Visual Studio 17 2022" -A x64 ^
-          -DCMAKE_BUILD_TYPE=Release ^
-          -DLOVE_JIT=ON ^
-          -DLOVE_NOMPG123=OFF ^
-          -DLOVE_AUDIO=ON
-        
-        Write-Host "CMake配置完成"
+        cmake -B build -S . -G "Visual Studio 17 2022" -A x64 -DCMAKE_BUILD_TYPE=Release
     
-    # 6. 编译
-    - name: Build with Chinese support
+    - name: Build
       run: |
         cd megasource
-        # 编译love目标
         cmake --build build --config Release --target love
-        
-        # 如果有install目标也编译
-        cmake --build build --config Release --target install 2>&1 || echo "install目标可选的"
     
-    # 7. 查找真正的可执行文件
-    - name: Find and verify executable
+    - name: Find executable
       run: |
-        echo "=== 查找编译结果 ==="
+        echo "=== Searching for executable ==="
         
-        # 搜索所有exe文件，按大小排序
-        $allExes = Get-ChildItem -Path megasource -Recurse -Filter "*.exe" -File
-        Write-Host "找到 $($allExes.Count) 个.exe文件"
+        $exeFiles = @()
+        if (Test-Path "megasource/build/src/Release/love.exe") {
+            $exeFiles += "megasource/build/src/Release/love.exe"
+        }
+        if (Test-Path "megasource/build/Release/love.exe") {
+            $exeFiles += "megasource/build/Release/love.exe"
+        }
+        if (Test-Path "megasource/install/bin/love.exe") {
+            $exeFiles += "megasource/install/bin/love.exe"
+        }
         
-        if ($allExes.Count -gt 0) {
-            # 按文件大小排序（love.exe通常较大）
-            $sortedExes = $allExes | Sort-Object Length -Descending
-            
-            Write-Host "`n文件大小排名:"
-            for ($i = 0; $i -lt [math]::Min(5, $sortedExes.Count); $i++) {
-                $exe = $sortedExes[$i]
-                $sizeMB = [math]::Round($exe.Length / 1MB, 2)
-                Write-Host "  $($i+1). $($exe.Name) - $sizeMB MB ($($exe.Directory))"
+        if ($exeFiles.Count -eq 0) {
+            # 搜索所有exe文件
+            $allExes = Get-ChildItem -Path megasource -Recurse -Filter "*.exe" -File
+            if ($allExes.Count -gt 0) {
+                $largest = $allExes | Sort-Object Length -Descending | Select-Object -First 1
+                $exeFiles += $largest.FullName
             }
-            
-            # 选择最可能是love.exe的文件
-            $candidate = $sortedExes | Where-Object { $_.Name -match "love" } | Select-Object -First 1
-            if (-not $candidate) {
-                $candidate = $sortedExes[0]  # 选择最大的
-            }
-            
-            # 复制到工作目录
-            Copy-Item $candidate.FullName .\love.exe -Force
-            $sizeMB = [math]::Round($candidate.Length / 1MB, 2)
-            Write-Host "`n✅ 选择文件: $($candidate.Name) ($sizeMB MB)"
-            Write-Host "   路径: $($candidate.FullName)"
-            
-            # 验证文件
-            if ((Get-Item .\love.exe).Length -gt 5MB) {
-                Write-Host "✓ 文件大小正常（大于5MB）"
-            } else {
-                Write-Host "⚠ 文件可能不完整"
-            }
+        }
+        
+        if ($exeFiles.Count -gt 0) {
+            $source = $exeFiles[0]
+            Copy-Item $source .\love.exe -Force
+            $size = (Get-Item .\love.exe).Length
+            $sizeMB = [math]::Round($size / 1MB, 2)
+            Write-Host "✓ Found: $source ($sizeMB MB)"
         } else {
-            Write-Host "❌ 未找到任何.exe文件"
-            # 列出build目录内容
-            Write-Host "`nbuild目录内容:"
-            Get-ChildItem "megasource/build" -Recurse | Select-Object -First 20
+            Write-Host "❌ No executable found"
         }
     
-    # 8. 打包所有资源
-    - name: Package everything
-      run: |
-        echo "=== 打包编译结果 ==="
-        
-        # 创建发行目录
-        mkdir -Force "love2d-chinese-release"
-        
-        # 复制可执行文件
-        if (Test-Path "love.exe") {
-            Copy-Item "love.exe" "love2d-chinese-release/"
-            Write-Host "✓ 复制 love.exe"
-        }
-        
-        # 复制中文字体
-        if (Test-Path "chinese-fonts") {
-            Copy-Item "chinese-fonts" "love2d-chinese-release/" -Recurse
-            Write-Host "✓ 复制中文字体"
-        }
-        
-        # 创建启动脚本
-        $batchContent = @'
-@echo off
-chcp 65001 > nul
-echo 正在启动 Love2D 中文版...
-echo 使用 chcp 65001 设置控制台为UTF-8编码
-echo.
-love.exe %*
-'@
-        
-        Set-Content -Path "love2d-chinese-release/run.bat" -Value $batchContent -Encoding ASCII
-        
-        # 创建说明文件
-        $readmeContent = @'
-Love2D 中文支持版本
-==================
-
-此版本已修改以支持中文字体显示。
-
-包含：
-1. love.exe - 主程序（已添加中文字体回退链）
-2. chinese-fonts/ - 开源中文字体
-3. run.bat - 启动脚本（自动设置UTF-8编码）
-
-使用方法：
-1. 直接运行 love.exe 启动程序
-2. 或运行 run.bat（会自动设置控制台编码）
-
-在你的LÖVE项目中使用中文字体：
-local font = love.graphics.newFont("chinese-fonts/SourceHanSansSC-Regular.otf", 16)
-love.graphics.setFont(font)
-
-支持的字体：
-- Source Han Sans (思源黑体)
-- Source Han Serif (思源宋体)
-- 系统自带中文字体（微软雅黑、宋体等）
-
-编译信息：
-- 基于 Love2D 官方源码
-- 添加了中文字体回退支持
-- 修改了控制台编码设置
-'@
-        
-        Set-Content -Path "love2d-chinese-release/README.txt" -Value $readmeContent -Encoding UTF8
-        
-        # 打包
-        Compress-Archive -Path "love2d-chinese-release/*" -DestinationPath "love2d-chinese-windows.zip" -Force
-        Write-Host "✓ 打包完成"
-    
-    # 9. 上传结果
-    - name: Upload Chinese version
+    - name: Upload result
       uses: actions/upload-artifact@v4
       with:
-        name: love2d-chinese-windows
-        path: |
-          love.exe
-          love2d-chinese-windows.zip
-          love2d-chinese-release/
-        if-no-files-found: error
+        name: love2d-chinese
+        path: love.exe
