@@ -1,78 +1,90 @@
 name: Build Love2D for Windows 64-bit
 
 on:
-  workflow_dispatch:  # 只手动触发，不自动运行
+  workflow_dispatch:  # 只手动触发
 
 jobs:
   build-windows:
     runs-on: windows-latest
     
     steps:
-    # 1. 首先克隆 megasource（Windows依赖库仓库）
+    # 1. 克隆 megasource
     - name: Clone Megasource
       uses: actions/checkout@v4
       with:
         repository: love2d/megasource
         path: megasource
     
-    # 2. 然后将你的love2d代码克隆到megasource的正确位置
+    # 2. 将你的love2d代码放入正确位置
     - name: Checkout Love2D into megasource
       uses: actions/checkout@v4
       with:
         path: megasource/libs/love
     
-    # 3. 配置CMake（在megasource目录内）
-    - name: Configure CMake with Megasource
+    # 3. 配置CMake
+    - name: Configure CMake
       run: |
         cd megasource
         cmake -B build -S . -G "Visual Studio 17 2022" -A x64
     
-    # 4. 开始编译
-    - name: Build
+    # 4. 只编译，不打包（跳过 PACKAGE 目标）
+    - name: Build love.exe only
       run: |
         cd megasource
-        cmake --build build --config Release --target PACKAGE
+        # 只编译 love 目标，不进行打包
+        cmake --build build --config Release --target love
     
-    # 5. 查找并准备编译好的文件
-    - name: Find compiled files
+    # 5. 查找编译好的 love.exe
+    - name: Find and extract love.exe
       run: |
-        echo "=== 查找编译生成的文件 ==="
-        cd megasource/build
-        # 查找.exe文件
-        Get-ChildItem -Recurse -Filter "*.exe" | ForEach-Object {
-          Write-Host "找到可执行文件: $($_.FullName)"
-          if ($_.Name -match "love") {
-            Copy-Item $_ ..\..\love.exe -Force
-            Write-Host "已复制为 love.exe"
-          }
+        echo "=== 搜索编译生成的可执行文件 ==="
+        
+        # 在可能的目录中查找
+        $possiblePaths = @(
+            "megasource/build/src/Release/love.exe",
+            "megasource/build/Release/love.exe", 
+            "megasource/install/bin/love.exe",
+            "megasource/build/libs/love/Release/love.exe"
+        )
+        
+        foreach ($path in $possiblePaths) {
+            if (Test-Path $path) {
+                Write-Host "✓ 找到: $path"
+                Copy-Item $path .\love.exe -Force
+                Write-Host "已复制到根目录的 love.exe"
+                break
+            }
         }
         
-        # 查找.zip打包文件
-        Get-ChildItem -Filter "*.zip" | ForEach-Object {
-          Write-Host "找到打包文件: $($_.Name)"
-          Copy-Item $_ ..\..\
+        # 如果没找到，递归搜索
+        if (-not (Test-Path "love.exe")) {
+            Write-Host "在标准路径未找到，开始递归搜索..."
+            Get-ChildItem -Path megasource -Recurse -Filter "love.exe" | Select-Object -First 1 | ForEach-Object {
+                Write-Host "找到: $($_.FullName)"
+                Copy-Item $_.FullName .\love.exe -Force
+            }
         }
         
-        # 检查结果
-        cd ../..
+        # 最终检查
         if (Test-Path "love.exe") {
-          Write-Host "✓ 成功: 找到 love.exe"
+            Write-Host "✅ 成功获取 love.exe"
+            # 显示文件信息
+            $file = Get-Item "love.exe"
+            Write-Host "文件大小: $($file.Length / 1MB) MB"
+            Write-Host "创建时间: $($file.CreationTime)"
         } else {
-          Write-Host "⚠ 未找到 love.exe，尝试其他位置..."
-          # 尝试其他可能的位置
-          if (Test-Path "megasource/install/bin/love.exe") {
-            Copy-Item "megasource/install/bin/love.exe" .\
-          }
+            Write-Host "❌ 未找到 love.exe"
+            Write-Host "调试信息 - 列出 build 目录:"
+            Get-ChildItem "megasource/build" -Recurse -Filter "*.exe" | ForEach-Object {
+                Write-Host "  - $($_.FullName)"
+            }
         }
     
-    # 6. 上传编译结果
+    # 6. 上传结果
     - name: Upload Windows 64-bit binary
       uses: actions/upload-artifact@v4
       with:
         name: love2d-windows-x64
         path: |
           love.exe
-          *.zip
-          megasource/build/*.exe
-          megasource/build/*.zip
-        if-no-files-found: warn
+        if-no-files-found: error
