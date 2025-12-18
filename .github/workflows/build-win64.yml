@@ -1,96 +1,31 @@
-name: Build Love2D with Chinese Support
-
-on:
-  workflow_dispatch:
+name: Final Build
+on: workflow_dispatch
 
 jobs:
   build:
-    runs-on: windows-2025
-    
+    runs-on: windows-latest
     steps:
-    # 1. 克隆 megasource
-    - name: Clone Megasource
-      uses: actions/checkout@v4
-      with:
-        repository: love2d/megasource
-        path: megasource
-    
-    # 2. 克隆你的 love2d
-    - name: Clone Love2D
-      uses: actions/checkout@v4
-      with:
-        path: megasource/libs/love
-    
-    # 3. 下载中文字体
-    - name: Download Chinese fonts
-      run: |
-        mkdir -Force "fonts"
-        curl -L -o "fonts/SourceHanSansSC-Regular.otf" "https://github.com/adobe-fonts/source-han-sans/raw/release/OTF/SimplifiedChinese/SourceHanSansSC-Regular.otf"
-        curl -L -o "fonts/SourceHanSerifSC-Regular.otf" "https://github.com/adobe-fonts/source-han-serif/raw/release/OTF/SimplifiedChinese/SourceHanSerifSC-Regular.otf"
-    
-    # 4. 复制字体
-    - name: Copy fonts
-      run: |
-        if (Test-Path "fonts") {
-            Copy-Item "fonts" "megasource/" -Recurse -Force
-        }
-    
-    # 5. 配置CMake
-    - name: Configure CMake
-      run: |
-        cd megasource
-        cmake -B build -S . -T v143 -A x64
-    
-    # 6. 编译
-    - name: Build
-      run: |
-        cd megasource
-        cmake --build build --config Release
-    
-    # 7. 查找可执行文件
-    - name: Find executable
-      run: |
-        $found = $false
-        @("megasource/build/src/Release/love.exe", 
-          "megasource/build/Release/love.exe",
-          "megasource/build/love.exe") | ForEach-Object {
-            if ((Test-Path $_) -and -not $found) {
-                Copy-Item $_ "love.exe" -Force
-                $found = $true
-                Write-Host "找到: $_"
-            }
-        }
-        
-        if (-not $found) {
-            $exe = Get-ChildItem -Path "megasource" -Recurse -Filter "love.exe" -File | Select-Object -First 1
-            if ($exe) {
-                Copy-Item $exe.FullName "love.exe" -Force
-                Write-Host "找到: $($exe.FullName)"
-            }
-        }
-        
-        if (Test-Path "love.exe") {
-            $size = (Get-Item "love.exe").Length / 1MB
-            Write-Host "文件大小: $([math]::Round($size, 2)) MB"
-        }
-    
-    # 8. 创建测试
-    - name: Create test
-      run: |
-        $test = @'
-function love.draw()
-    love.graphics.print("测试中文", 100, 100)
-end
-'@
-        Set-Content -Path "test.lua" -Value $test -Encoding UTF8
-    
-    # 9. 上传
-    - name: Upload
-      uses: actions/upload-artifact@v4
-      with:
-        name: love2d-build
-        path: |
-          love.exe
-          test.lua
-          fonts/
-        if-no-files-found: warn
+      - name: Get source
+        run: |
+          git clone https://github.com/love2d/megasource.git
+          git clone https://github.com/${{ github.repository }}.git megasource/libs/love
+      
+      - name: Build
+        run: |
+          cd megasource
+          cmake -B build -S .
+          cmake --build build --config Release
+      
+      - name: Find exe
+        run: |
+          mkdir output
+          $exe = Get-ChildItem -Path megasource -Recurse -Filter "love.exe" -File | Select-Object -First 1
+          if ($exe) {
+            Copy-Item $exe.FullName output/love.exe
+            echo "Found: $($exe.FullName)"
+          }
+      
+      - uses: actions/upload-artifact@v4
+        with:
+          name: love-final
+          path: output/
