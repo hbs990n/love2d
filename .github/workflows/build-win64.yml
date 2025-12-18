@@ -1,108 +1,110 @@
 name: Build Love2D Windows (完整版)
 
 on:
-  workflow_dispatch:  # 只手动运行
+  workflow_dispatch:
 
 jobs:
   build:
-    runs-on: windows-latest  # 使用Windows环境
+    runs-on: windows-latest
     
     steps:
-    # 第一步：克隆 megasource 库
-    - name: Clone megasource (依赖库)
+    # 第一步：克隆 megasource
+    - name: Clone megasource
       uses: actions/checkout@v4
       with:
         repository: love2d/megasource
         path: megasource
-        submodules: recursive  # 重要：获取子模块
     
-    # 第二步：克隆你的 love2d 代码到正确位置
-    - name: Clone your love2d into megasource
+    # 第二步：克隆你的 love2d
+    - name: Clone your love2d
       uses: actions/checkout@v4
       with:
         path: megasource/libs/love
     
-    # 第三步：配置 CMake (关键步骤)
-    - name: Configure CMake properly
+    # 第三步：配置 CMake (PowerShell 正确语法)
+    - name: Configure CMake
       run: |
         cd megasource
-        # 重要：必须指定安装目录
-        cmake -B build -S . ^
-          -G "Visual Studio 17 2022" ^
-          -A x64 ^
-          --install-prefix install
+        # PowerShell 中参数写法：每个参数单独一行或用 `
+        cmake -B build -S . `
+          -G "Visual Studio 17 2022" `
+          -A x64 `
+          -DCMAKE_INSTALL_PREFIX=install
     
-    # 第四步：编译并安装 (关键步骤)
+    # 第四步：编译安装
     - name: Build and install
       run: |
         cd megasource
-        # 重要：使用 install 目标，这会生成完整exe
         cmake --build build --config Release --target install
         
-        # 检查文件大小
-        echo "检查编译结果..."
+        # 检查结果
+        echo "=== 检查编译结果 ==="
         if (Test-Path "install/bin/love.exe") {
             $file = Get-Item "install/bin/love.exe"
             $sizeMB = [math]::Round($file.Length / 1MB, 2)
-            echo "✅ love.exe 大小: $sizeMB MB"
+            Write-Host "✅ love.exe 大小: $sizeMB MB"
+        } else {
+            Write-Host "❌ 未在 install/bin/ 找到 love.exe"
+            # 检查其他位置
+            Get-ChildItem -Path . -Recurse -Filter "love.exe" -ErrorAction SilentlyContinue | ForEach-Object {
+                $sizeMB = [math]::Round($_.Length / 1MB, 2)
+                Write-Host "在其他位置找到: $($_.FullName) ($sizeMB MB)"
+            }
+        }
+    
+    # 第五步：准备上传文件
+    - name: Prepare files
+      run: |
+        echo "=== 准备文件 ==="
+        
+        # 查找 love.exe
+        $lovePath = $null
+        $possiblePaths = @(
+            "megasource/install/bin/love.exe",
+            "megasource/build/Release/love.exe", 
+            "megasource/build/src/Release/love.exe"
+        )
+        
+        foreach ($path in $possiblePaths) {
+            if (Test-Path $path) {
+                $lovePath = $path
+                break
+            }
+        }
+        
+        if (-not $lovePath) {
+            # 搜索所有 exe 文件
+            $allExes = Get-ChildItem -Path "megasource" -Recurse -Filter "*.exe" -File
+            if ($allExes.Count -gt 0) {
+                # 选择最大的
+                $largest = $allExes | Sort-Object Length -Descending | Select-Object -First 1
+                $lovePath = $largest.FullName
+                Write-Host "找到最大的exe: $lovePath"
+            }
+        }
+        
+        if ($lovePath) {
+            Copy-Item $lovePath .\love.exe -Force
+            $sizeMB = [math]::Round((Get-Item .\love.exe).Length / 1MB, 2)
+            Write-Host "✅ 准备上传: love.exe ($sizeMB MB)"
+            
+            # 如果是小文件，列出详细信息
             if ($sizeMB -lt 5) {
-                echo "⚠ 警告：文件可能不完整"
+                Write-Host "⚠ 文件较小，详细信息："
+                Write-Host "源文件: $lovePath"
+                dir "megasource/install" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 20
             }
         } else {
-            echo "❌ 未找到 love.exe"
+            Write-Host "❌ 未找到任何可执行文件"
+            # 列出 build 目录内容帮助调试
+            Write-Host "build目录内容:"
+            dir "megasource/build" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 30
         }
     
-    # 第五步：查找和准备文件
-    - name: Prepare files for upload
-      run: |
-        echo "=== 准备上传文件 ==="
-        
-        # 首先检查 install 目录
-        if (Test-Path "megasource/install/bin/love.exe") {
-            $source = "megasource/install/bin/love.exe"
-        } 
-        # 如果没有，检查 build 目录
-        elseif (Test-Path "megasource/build/Release/love.exe") {
-            $source = "megasource/build/Release/love.exe"
-        }
-        elseif (Test-Path "megasource/build/src/Release/love.exe") {
-            $source = "megasource/build/src/Release/love.exe"
-        }
-        else {
-            # 最后尝试搜索
-            $allExes = Get-ChildItem -Path megasource -Recurse -Filter "*.exe" -File
-            if ($allExes.Count -gt 0) {
-                $largest = $allExes | Sort-Object Length -Descending | Select-Object -First 1
-                $source = $largest.FullName
-                echo "找到: $source"
-            } else {
-                echo "❌ 未找到任何exe文件"
-                exit 1
-            }
-        }
-        
-        # 复制到根目录
-        Copy-Item $source .\love.exe -Force
-        
-        # 显示文件信息
-        $file = Get-Item .\love.exe
-        $sizeMB = [math]::Round($file.Length / 1MB, 2)
-        echo "✅ 准备上传: love.exe ($sizeMB MB)"
-        
-        # 如果是小文件，列出所有可能的大文件
-        if ($sizeMB -lt 5) {
-            echo "⚠ 文件较小，列出所有exe文件："
-            Get-ChildItem -Path megasource -Recurse -Filter "*.exe" -File | ForEach-Object {
-                $fileSize = [math]::Round($_.Length / 1MB, 2)
-                echo "  - $($_.FullName) ($fileSize MB)"
-            }
-        }
-    
-    # 第六步：上传结果
-    - name: Upload artifact
+    # 第六步：上传
+    - name: Upload
       uses: actions/upload-artifact@v4
       with:
         name: love2d-windows-full
-        path: |
-          love.exe
+        path: love.exe
         if-no-files-found: error
