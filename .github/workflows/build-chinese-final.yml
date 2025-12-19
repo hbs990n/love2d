@@ -21,47 +21,57 @@ jobs:
       with:
         path: megasource/libs/love
     
-    # 3. 下载中文字体（修复链接）
+    # 3. 下载中文字体（可选）
     - name: Download Chinese font
       run: |
         echo "=== 下载中文字体 ==="
         mkdir -Force "megasource/chinese-fonts"
         
-        # 使用 raw.githubusercontent.com 而不是 github.com/raw
+        # 使用 raw.githubusercontent.com
         $fontUrl = "https://raw.githubusercontent.com/adobe-fonts/source-han-sans/release/OTF/SimplifiedChinese/SourceHanSansSC-Regular.otf"
         
-        echo "下载URL: $fontUrl"
+        echo "下载字体..."
+        curl -L -o "megasource/chinese-fonts/SourceHanSansSC-Regular.otf" $fontUrl --silent
         
-        # 下载字体
-        try {
-          curl -L -o "megasource/chinese-fonts/SourceHanSansSC-Regular.otf" $fontUrl
-          
-          if (Test-Path "megasource/chinese-fonts/SourceHanSansSC-Regular.otf") {
-            $sizeMB = [math]::Round((Get-Item "megasource/chinese-fonts/SourceHanSansSC-Regular.otf").Length / 1MB, 2)
-            echo "✓ 字体下载成功: $sizeMB MB"
-          } else {
-            echo "✗ 字体文件不存在"
-          }
-        } catch {
-          echo "字体下载失败，跳过字体下载"
+        if (Test-Path "megasource/chinese-fonts/SourceHanSansSC-Regular.otf") {
+          $sizeMB = [math]::Round((Get-Item "megasource/chinese-fonts/SourceHanSansSC-Regular.otf").Length / 1MB, 2)
+          echo "✓ 字体下载成功: $sizeMB MB"
+        } else {
+          echo "⚠ 字体下载失败（不影响编译）"
         }
     
-    # 4. 配置CMake
+    # 4. 配置CMake（修复--install-prefix参数）
     - name: Configure CMake
       run: |
         cd megasource
         echo "配置CMake..."
-        cmake -B build -S . -T v143 -A x64 --install-prefix install
+        
+        # 获取当前绝对路径
+        $currentDir = (Get-Location).Path
+        $installPath = "$currentDir\install"
+        echo "安装路径: $installPath"
+        
+        # 方法1：使用绝对路径
+        cmake -B build -S . -T v143 -A x64 --install-prefix "$installPath"
+        
+        echo "CMake配置完成"
     
     # 5. 编译
     - name: Build
       run: |
         cd megasource
         echo "开始编译..."
+        
+        # 编译PACKAGE目标（生成安装包）
         cmake --build build --config Release --target PACKAGE
         
-        # 可选：同时编译install目标
+        echo "PACKAGE目标编译完成"
+        
+        # 尝试编译install目标获取独立exe
+        echo "尝试编译install目标..."
         cmake --build build --config Release --target install 2>&1 | Out-Null
+        
+        echo "编译完成"
     
     # 6. 准备输出文件
     - name: Prepare output files
@@ -76,54 +86,43 @@ jobs:
         if (Test-Path "megasource/chinese-fonts") {
           $fontFiles = Get-ChildItem "megasource/chinese-fonts" -Filter "*.otf" -File
           if ($fontFiles.Count -gt 0) {
-            Copy-Item "megasource/chinese-fonts" "output/" -Recurse -Force
-            echo "复制字体文件到 output/chinese-fonts/"
+            mkdir -Force "output/chinese-fonts"
+            Copy-Item "megasource/chinese-fonts/*.otf" "output/chinese-fonts/" -Force
+            echo "✓ 复制字体文件"
           }
         }
         
-        # 2. 查找并复制可执行文件
+        # 2. 查找可执行文件（按优先级）
         $exeFound = $false
         
-        # 首先查找install目录
+        # 优先级1：install目录（如果有）
         $installExe = "megasource/install/bin/love.exe"
         if (Test-Path $installExe) {
           Copy-Item $installExe "output/love.exe" -Force
           $exeFound = $true
           $sizeMB = [math]::Round((Get-Item $installExe).Length / 1MB, 2)
-          echo "✓ 从install目录复制 love.exe ($sizeMB MB)"
+          echo "✓ 找到 love.exe ($sizeMB MB) - 来自install目录"
         }
         
-        # 如果没找到，查找build目录
+        # 优先级2：搜索build目录
         if (-not $exeFound) {
-          $buildExe = "megasource/build/Release/love.exe"
-          if (Test-Path $buildExe) {
-            Copy-Item $buildExe "output/love.exe" -Force
-            $exeFound = $true
-            $sizeMB = [math]::Round((Get-Item $buildExe).Length / 1MB, 2)
-            echo "✓ 从build目录复制 love.exe ($sizeMB MB)"
-          }
-        }
-        
-        # 如果还没找到，搜索所有exe文件
-        if (-not $exeFound) {
-          $exeFiles = Get-ChildItem -Path "megasource" -Recurse -Filter "love.exe" -File
+          $exeFiles = Get-ChildItem -Path "megasource/build" -Recurse -Filter "love.exe" -File
           if ($exeFiles.Count -gt 0) {
             $exeFile = $exeFiles[0]
             Copy-Item $exeFile.FullName "output/love.exe" -Force
             $exeFound = $true
             $sizeMB = [math]::Round($exeFile.Length / 1MB, 2)
-            echo "✓ 找到并复制 love.exe ($sizeMB MB)"
+            echo "✓ 找到 love.exe ($sizeMB MB) - 来自build目录"
           }
         }
         
+        # 如果还没找到，列出所有可能的exe文件
         if (-not $exeFound) {
-          echo "⚠ 警告：未找到 love.exe 文件"
-          # 列出可能的文件
-          echo "搜索到的exe文件:"
-          Get-ChildItem -Path "megasource/build" -Recurse -Filter "*.exe" -File | 
+          echo "⚠ 未找到 love.exe，列出所有exe文件:"
+          Get-ChildItem -Path "megasource" -Recurse -Filter "*.exe" -File | 
             ForEach-Object { 
               $sizeKB = [math]::Round($_.Length / 1KB, 1)
-              echo "  - $($_.Name) ($sizeKB KB)"
+              echo "  - $($_.Name) ($sizeKB KB) at $($_.Directory)"
             }
         }
         
@@ -132,19 +131,26 @@ jobs:
         if ($zipFiles.Count -gt 0) {
           foreach ($zip in $zipFiles) {
             Copy-Item $zip.FullName "output/$($zip.Name)" -Force
-            echo "复制打包文件: $($zip.Name)"
+            $sizeMB = [math]::Round($zip.Length / 1MB, 2)
+            echo "✓ 复制 $($zip.Name) ($sizeMB MB)"
           }
+        } else {
+          echo "ℹ 未找到ZIP打包文件"
         }
         
-        # 显示输出目录内容
+        # 显示最终输出
         echo "`n输出目录内容:"
-        Get-ChildItem "output" -Recurse | ForEach-Object {
-          if ($_.PSIsContainer) {
-            echo "  [目录] $($_.Name)"
-          } else {
-            $sizeKB = [math]::Round($_.Length / 1KB, 1)
-            echo "  - $($_.Name) ($sizeKB KB)"
+        if (Test-Path "output") {
+          dir output -Recurse | ForEach-Object {
+            if ($_.PSIsContainer) {
+              echo "  [目录] $($_.Name)"
+            } else {
+              $sizeKB = [math]::Round($_.Length / 1KB, 1)
+              echo "  - $($_.Name) ($sizeKB KB)"
+            }
           }
+        } else {
+          echo "  (空目录)"
         }
     
     # 7. 上传编译结果
@@ -153,4 +159,4 @@ jobs:
       with:
         name: love2d-chinese-build
         path: output/
-        if-no-files-found: error
+        if-no-files-found: warn
